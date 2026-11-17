@@ -8,4 +8,4 @@ Here I will upload browser extensions for PC.
 4. Click **Load unpacked** and select the extension's folder.
 
 ## 🤖 Credits & Tools
-These browser extensions were created with the assistance of AI tools, specifically **Claude** and **Google Gemini**.
+These browser extensions were created with the assistance of AI tools
