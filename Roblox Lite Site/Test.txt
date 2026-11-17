@@ -1,0 +1,34 @@
+// === ROBLOX NATIVE PRESENCE STATUS COMPONENT ===
+var tB = {
+    // Το HTML προσχέδιο (Template) που χρησιμοποιεί το Roblox για να σχεδιάσει το UI
+    template: `
+        <!-- 1. Αν υπάρχει custom μήνυμα κατάστασης (Status Translation) -->
+        <span ng-class='$ctrl.className' 
+              ng-if='$ctrl.statusLabelTranslation' 
+              ng-bind='$ctrl.statusLabelTranslation | translate'>
+        </span>
+        
+        <!-- 2. Αν παίζει παιχνίδι και υπάρχει έγκυρο Place ID (Εδώ δημιουργείται η κάρτα) -->
+        <a ng-class='$ctrl.linkClassName' 
+           ng-if='!$ctrl.statusLabelTranslation && $ctrl.presence.rootPlaceId' 
+           href='/games/{{$ctrl.presence.rootPlaceId}}' 
+           ng-bind='$ctrl.presence.lastLocation'>
+        </a>
+        
+        <!-- 3. Αν είναι απλά Online στο site (χωρίς να παίζει κάποιο παιχνίδι) -->
+        <span ng-class='$ctrl.className' 
+              ng-if='!$ctrl.statusLabelTranslation && !$ctrl.presence.rootPlaceId' 
+              ng-bind="'Label.Online' | translate">
+        </span>
+    `,
+
+    // Ο εσωτερικός "εγκέφαλος" (Controller) που διαχειρίζεται τα δεδομένα παρουσίας
+    controller: "presenceStatusController",
+
+    // Οι παράμετροι εισόδου (Inputs) που δέχεται το component από τη σελίδα
+    bindings: {
+        userId: "<",        // One-Way Binding: Το αριθμητικό ID του παίκτη (π.χ. 1560648302)
+        linkClassName: "@", // String Binding: Η CSS κλάση για το link (π.χ. currently-playing-card)
+        className: "@"      // String Binding: Η CSS κλάση για το κείμενο
+    }
+};

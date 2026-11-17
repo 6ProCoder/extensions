@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Roblox Lite</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body { background: #191b1d; color: #fff; font-family: Arial, sans-serif; display: flex; }
+    nav { width: 190px; background: #1f2123; border-right: 1px solid #2c2f32; padding: 14px 10px; display: flex; flex-direction: column; gap: 6px; flex: none; }
+    nav h1 { font-size: 15px; color: #00b0ff; margin: 0 6px 10px; }
+    nav button { background: none; border: none; color: #bbb; text-align: left; padding: 10px 12px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+    nav button:hover { background: #2a2d30; color: #fff; }
+    nav button.active { background: #2b3a45; color: #00b0ff; font-weight: bold; }
+    main { flex: 1; padding: 22px 26px; overflow-y: auto; }
+    h2 { margin: 0 0 14px; font-size: 18px; }
+    h3 { margin: 24px 0 10px; font-size: 14px; color: #aaa; text-transform: uppercase; letter-spacing: .5px; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; max-width: 860px; margin: 24px 0 10px; }
+    .section-header h3 { margin: 0; }
+    .card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: #232527; border: 1px solid #333; border-radius: 10px; max-width: 860px; }
+    .card img.icon { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; background: #333; flex: none; }
+    .card .txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+    .name { font-weight: bold; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status { font-size: 12px; font-weight: bold; color: #aaa; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #777; display: inline-block; }
+    .playing .status { color: #4caf50; } .playing .dot { background: #4caf50; }
+    .online .status { color: #00b0ff; } .online .dot { background: #00b0ff; }
+    .error .status { color: #ff5252; } .error .dot { background: #ff5252; }
+    .btns { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+    .btn { background: #3a3d40; color: #fff; border: none; border-radius: 5px; padding: 6px 10px; font-size: 12px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .btn:hover:not(:disabled) { background: #4a4e52; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn.primary { background: #00b0ff; color: #111; } .btn.primary:hover:not(:disabled) { background: #0091ea; }
+    .btn.green { background: #4caf50; color: #fff; } .btn.green:hover:not(:disabled) { background: #43a047; }
+    .btn.purple { background: #7e57c2; color: #fff; } .btn.purple:hover:not(:disabled) { background: #673ab7; }
+    .btn.teal { background: #00897b; color: #fff; } .btn.teal:hover:not(:disabled) { background: #00796b; }
+    .btn.danger { background: #c0392b; } .btn.danger:hover:not(:disabled) { background: #a93226; }
+    .list { display: flex; flex-direction: column; gap: 8px; max-width: 860px; }
+    .row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #232527; border: 1px solid #2e3134; border-radius: 8px; }
+    .row img { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: #333; flex: none; }
+    .row img.round { border-radius: 50%; }
+    .row .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .row a { color: #fff; text-decoration: none; font-weight: bold; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .row a:hover { text-decoration: underline; }
+    .sub { font-size: 12px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sub a { color: #4caf50; font-weight: normal; }
+    .star { background: none; border: none; font-size: 20px; cursor: pointer; color: #666; padding: 0 2px; }
+    .star.on { color: #ffc107; }
+    .empty { color: #888; font-size: 13px; padding: 10px 0; }
+    .badge { font-size: 11px; padding: 2px 7px; border-radius: 4px; background: #2b3a45; color: #00b0ff; font-weight: bold; }
+    .badge.fallback { background: #3a3122; color: #ffb74d; }
+    .badge.time { background: #243628; color: #81c784; }
+    input[type=text], input[type=number], textarea, select { background: #2a2d30; border: 1px solid #444; color: #fff; border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: Arial, sans-serif; }
+    input[type=text], textarea { width: 100%; max-width: 860px; }
+    input[type=number] { max-width: 120px; }
+    select { cursor: pointer; flex: none; }
+    select:focus, input:focus, textarea:focus { outline: none; border-color: #00b0ff; }
+    textarea { height: 140px; resize: vertical; }
+    .bar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; max-width: 860px; flex-wrap: wrap; }
+    .bar input[type=text] { flex: 1; min-width: 160px; }
+    .note { font-size: 12px; color: #888; margin: 6px 0 12px; max-width: 860px; line-height: 1.4; }
+    .setting-box { background: #232527; border: 1px solid #2e3134; border-radius: 8px; padding: 14px 16px; max-width: 860px; margin-bottom: 16px; }
+    .setting-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+    label { font-size: 13px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    .toast { position: fixed; bottom: 18px; right: 18px; background: #2b3a45; border: 1px solid #00b0ff; color: #fff; padding: 12px 16px; border-radius: 8px; font-size: 13px; font-weight: bold; box-shadow: 0 4px 14px rgba(0,0,0,0.5); z-index: 9999; max-width: 340px; }
+  </style>
+</head>
+<body>
+  <nav>
+    <h1>⚡ Roblock Lite</h1>
+    <button data-view="home">🏠 Home</button>
+    <button data-view="history">🕘 History</button>
+    <button data-view="favorites">⭐ Favorites</button>
+    <button data-view="settings">⚙️ Settings</button>
+  </nav>
+  <main id="main"></main>
+  <script src="presence.js"></script>
+  <script src="lite.js"></script>
+</body>
+</html>

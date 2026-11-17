@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Roblox Lite Site",
+  "version": "10.0",
+  "description": "Γρήγορο Lite Site για Roblox: live παιχνίδι, φίλοι online, Continue, Direct Join, Server Hop, Playtime & ειδοποιήσεις.",
+  "permissions": [
+    "storage",
+    "declarativeNetRequest",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://*.roblox.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Άνοιγμα Lite Site",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
