@@ -31,6 +31,11 @@ let autoRejoin = false;
 let autoRejoinAttempts = 0;
 let lastPlayingGame = null;    // { placeId, gameId, name }
 let openNotePlaceId = null;    // poio paixnidi exei anoixto to panel VIP/Note
+let friendIcons = new Map();      // placeId -> game icon (for server groups)
+let homeSections = null;         // { recent, recommended }
+let homeLoading = false;
+let homeError = false;
+let homeLoadedAt = 0;
 let iconFetchInProgress = false;
 
 // Katagrafi xronou paixnidiou & eidopoiiseon
@@ -89,7 +94,7 @@ async function copyPrompt(name, placeId, btn) {
     .replace(/{gameId}/g, placeId || "Άγνωστο");
   await navigator.clipboard.writeText(text);
   const old = btn.textContent;
-  btn.textContent = "Copied! ✔";
+  btn.textContent = "Αντιγράφηκε! ✔";
   setTimeout(() => (btn.textContent = old), 1800);
 }
 
@@ -106,7 +111,7 @@ function makeCopyLinkBtn(url) {
       const oldText = btn.textContent;
       const oldClass = btn.className;
 
-      btn.textContent = "Copied! ✔";
+      btn.textContent = "Αντιγράφηκε! ✔";
       btn.className = "btn";
 
       setTimeout(() => {
@@ -141,7 +146,7 @@ function makeDirectJoinBtn(placeId, followUserId = null, gameInstanceId = null, 
 
 function makeServerHopBtn(placeId, mode = "empty", excludeGameId = null) {
   const isEmpty = mode === "empty";
-  const label = isEmpty ? "⚡ Άδειος" : "📶 Low Ping";
+  const label = isEmpty ? "⚡ Άδειος" : "📶 Χαμηλό Ping";
   const title = isEmpty
     ? "Server Hop σε public server με τους λιγότερους παίκτες"
     : "Server Hop σε public server με το χαμηλότερο ping";
@@ -354,7 +359,7 @@ async function syncContinueHistory() {
       fillMissingIcons();
     });
   } catch (e) {
-    console.warn("Continue API unavailable, using local fallback:", e.message);
+    console.warn("Το Continue API δεν είναι διαθέσιμο, χρήση τοπικού ιστορικού:", e.message);
     continueSyncStatus = "fallback";
   }
 }
@@ -516,6 +521,7 @@ async function manualRefreshFriends(isInitial = false) {
     friendsLoading = false;
     startFriendsCooldown();
     if (view === "home") updateHomeFriends();
+    loadFriendGameIcons();
   }
 }
 
@@ -525,11 +531,11 @@ function quickLaunchBar() {
     type: "text",
     placeholder: "Επικόλλησε Roblox URL παιχνιδιού ή άφησέ το κενό για άνοιγμα Roblox"
   });
-  const goBtn = h("button", { class: "btn green", textContent: "🚀 Open Roblox" });
+  const goBtn = h("button", { class: "btn green", textContent: "🚀 Άνοιγμα Roblox" });
 
   const updateBtnLabel = () => {
     if (goBtn.disabled) return;
-    goBtn.textContent = input.value.trim() ? "▶ Quick Join" : "🚀 Open Roblox";
+    goBtn.textContent = input.value.trim() ? "▶ Γρήγορο Join" : "🚀 Άνοιγμα Roblox";
   };
 
   input.addEventListener("input", updateBtnLabel);
@@ -554,7 +560,7 @@ function quickLaunchBar() {
 
     const placeId = extractPlaceIdFromUrl(raw);
     if (!placeId) {
-      showToast("⚠️ Μη έγκυρο Roblox URL. Κάνε επικόλληση ένα link παιχνιδιού roblox.com/games/...");
+      showToast("⚠️ Μη έγκυρο Roblox URL. Επικόλλησε ένα link παιχνιδιού roblox.com/games/...");
       return;
     }
     goBtn.disabled = true;
@@ -586,7 +592,7 @@ function currentCard() {
   const rejoinBtn = h("button", {
     class: "btn " + (autoRejoin ? "green" : ""),
     style: "align-self: flex-start; margin-left: auto;",
-    textContent: autoRejoin ? "🔁 Auto-Rejoin: ON" : "🔁 Auto-Rejoin: OFF",
+    textContent: autoRejoin ? "🔁 Auto-Rejoin: ΕΝΕΡΓΟ" : "🔁 Auto-Rejoin: ΑΝΕΝΕΡΓΟ",
     title: "Αυτόματη επανασύνδεση αν σε πετάξει έξω (disconnect/AFK)"
   });
   rejoinBtn.addEventListener("click", () => {
@@ -595,7 +601,7 @@ function currentCard() {
     if (autoRejoin && s && s.status === "playing" && s.placeId) {
       lastPlayingGame = { placeId: s.placeId, gameId: s.gameId, name: s.gameName };
     }
-    showToast(autoRejoin ? "🔁 Auto-Rejoin ενεργοποιήθηκε!" : "⏹️ Auto-Rejoin απενεργοποιήθηκε.");
+    showToast(autoRejoin ? "🔁 Το Auto-Rejoin ενεργοποιήθηκε!" : "⏹️ Το Auto-Rejoin απενεργοποιήθηκε.");
     updateHomeCurrent();
   });
 
@@ -617,7 +623,7 @@ function currentCard() {
   }
 
   const sessionText = s.status === "playing" && sessionStartTime
-    ? ` · Session: ${formatPlaytime(Date.now() - sessionStartTime)}`
+    ? ` · Συνεδρία: ${formatPlaytime(Date.now() - sessionStartTime)}`
     : "";
 
   const label = {
@@ -680,6 +686,214 @@ function friendRow(f) {
   return row;
 }
 
+function makeChipAvatar(url, name) {
+  const initial = (name || "?").trim().charAt(0).toUpperCase() || "?";
+  const ph = () => h("div", { class: "ph", textContent: initial });
+  if (!url) return ph();
+  const img = h("img", { src: url, alt: "", loading: "lazy" });
+  img.addEventListener("error", () => img.replaceWith(ph()));
+  return img;
+}
+
+// Groups friends who are in the same server (same gameId). Friends without a gameId get their own group.
+function groupFriendsByServer(list) {
+  const map = new Map();
+  list.forEach((f) => {
+    const key = f.gameId ? `${f.placeId}:${f.gameId}` : `solo:${f.id}`;
+    if (!map.has(key)) map.set(key, { placeId: f.placeId, gameId: f.gameId || null, name: f.location, friends: [] });
+    map.get(key).friends.push(f);
+  });
+  return [...map.values()].sort((a, b) => b.friends.length - a.friends.length);
+}
+
+function serverGroupCard(g) {
+  const gameUrl = `https://www.roblox.com/games/${g.placeId}`;
+  const together = g.friends.length > 1;
+  const names = g.friends.map((f) => f.displayName || f.name || "Παίκτης");
+
+  const sub = together
+    ? `👥 ${g.friends.length} φίλοι μαζί σε αυτόν τον server`
+    : `👤 ${names[0]} παίζει`;
+
+  const btns = h("div", { class: "server-btns" });
+  if (g.gameId) {
+    btns.append(
+      makeDirectJoinBtn(g.placeId, null, g.gameId, "▶ Join στον server"),
+      makeCopyLinkBtn(`https://www.roblox.com/games/start?placeId=${g.placeId}&gameInstanceId=${g.gameId}`)
+    );
+  } else {
+    btns.append(
+      makeDirectJoinBtn(g.placeId, g.friends[0].id, null, "▶ Join τον φίλο"),
+      makeCopyLinkBtn(gameUrl)
+    );
+  }
+
+  const chips = h("div", { class: "chips" }, ...g.friends.map((f, i) =>
+    h("div", { class: "chip" },
+      makeChipAvatar(f.avatar, names[i]),
+      h("a", { href: `https://www.roblox.com/users/${f.id}/profile`, target: "_blank", textContent: names[i] }))
+  ));
+
+  return h("div", { class: "server-card" + (together ? " together" : "") },
+    h("div", { class: "server-head" },
+      makeGameThumb(friendIcons.get(Number(g.placeId)) || ""),
+      h("div", { class: "txt" },
+        h("a", { href: gameUrl, target: "_blank", textContent: g.name || "Roblox Game" }),
+        h("span", { class: "sub", textContent: sub })),
+      btns),
+    chips);
+}
+
+async function loadFriendGameIcons() {
+  const ids = [...new Set((friends || []).filter((f) => f.type === 2 && f.placeId).map((f) => Number(f.placeId)))]
+    .filter((id) => !friendIcons.has(id))
+    .slice(0, 30);
+  if (!ids.length) return;
+  const icons = await RB.getIconsByPlaceIds(ids);
+  icons.forEach((url, id) => friendIcons.set(Number(id), url));
+  if (view === "home") updateHomeFriends();
+}
+
+// ---------- Roblox-style carousel: 7 full cards per page, arrows, no scrollbar ----------
+const CAROUSEL_VISIBLE = 7;
+
+function makeCarousel(id) {
+  const arrow = (dir) => {
+    const el = h("div", { class: `scroller-new ${dir}` },
+      h("span", { class: `icon-chevron-heavy-${dir === "prev" ? "left" : "right"}` }));
+    el.setAttribute("data-testid", "game-carousel-scroll-bar");
+    el.setAttribute("role", "button");
+    el.setAttribute("tabindex", "0");
+    el.setAttribute("aria-disabled", "true");
+    el.setAttribute("aria-label", dir === "prev" ? "Προηγούμενο" : "Επόμενο");
+    return el;
+  };
+
+  const prev = arrow("prev");
+  const next = arrow("next");
+  const viewport = h("div", { id, class: "carousel" });
+  const wrap = h("div", { class: "carousel-wrap" }, prev, viewport, next);
+  let index = 0;
+
+  const tiles = () => viewport.querySelectorAll(".tile");
+  const stride = () => {
+    const t = tiles();
+    // getBoundingClientRect keeps the fractional pixels (offsetLeft rounds them, which cuts cards)
+    return t.length > 1 ? t[1].getBoundingClientRect().left - t[0].getBoundingClientRect().left : 0;
+  };
+
+  const update = () => {
+    const s = stride();
+    if (s) index = Math.round(viewport.scrollLeft / s);
+    const max = viewport.scrollWidth - viewport.clientWidth;
+    prev.setAttribute("aria-disabled", String(viewport.scrollLeft <= 2));
+    next.setAttribute("aria-disabled", String(max <= 2 || viewport.scrollLeft >= max - 2));
+  };
+
+  const go = (dir) => {
+    const s = stride();
+    const n = tiles().length;
+    if (!s || n <= CAROUSEL_VISIBLE) return;
+    const target = dir === "next"
+      ? Math.min(index + CAROUSEL_VISIBLE, n - CAROUSEL_VISIBLE)
+      : Math.max(index - CAROUSEL_VISIBLE, 0);
+    viewport.scrollTo({ left: target * s, behavior: "smooth" });
+  };
+
+  [prev, next].forEach((el) => {
+    const dir = el === prev ? "prev" : "next";
+    el.addEventListener("click", () => {
+      if (el.getAttribute("aria-disabled") !== "true") go(dir);
+    });
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); el.click(); }
+    });
+  });
+
+  viewport.addEventListener("scroll", update, { passive: true });
+  // On window resize the card width changes, so keep the same first card aligned
+  new ResizeObserver(() => {
+    const s = stride();
+    if (s) viewport.scrollTo({ left: index * s, behavior: "instant" });
+    update();
+  }).observe(viewport);
+
+  wrap._update = update;
+  return wrap;
+}
+
+function resetCarousel(viewport) {
+  viewport.scrollTo({ left: 0, behavior: "instant" });
+  viewport.parentElement?._update?.();
+}
+
+function gameTile(g) {
+  const url = g.url || `https://www.roblox.com/games/${g.placeId}`;
+  const thumb = g.iconUrl
+    ? h("img", { src: g.iconUrl, alt: "", loading: "lazy" })
+    : h("div", { class: "ph", textContent: "🎮" });
+
+  const bits = [];
+  if (g.playerCount != null) bits.push(`👥 ${Number(g.playerCount).toLocaleString()}`);
+  const votes = (g.upVotes || 0) + (g.downVotes || 0);
+  if (votes > 0) bits.push(`👍 ${Math.round((g.upVotes / votes) * 100)}%`);
+
+  return h("div", { class: "tile" },
+    h("a", { href: url, target: "_blank", title: g.name }, thumb),
+    h("a", { class: "tname", href: url, target: "_blank", title: g.name, textContent: g.name }),
+    bits.length ? h("span", { class: "sub", textContent: bits.join(" · ") }) : null,
+    makeDirectJoinBtn(g.placeId, null, null, "▶ Join"));
+}
+
+async function loadHomeSections(force = false) {
+  if (homeLoading) return;
+  if (!force && homeSections && Date.now() - homeLoadedAt < 5 * 60 * 1000) return;
+  homeLoading = true;
+  updateHomeSectionsUI();
+
+  const localRecent = async () => {
+    const { history = [] } = await chrome.storage.local.get("history");
+    return history
+      .slice()
+      .sort((a, b) => b.lastPlayed - a.lastPlayed)
+      .slice(0, 20)
+      .map((e) => ({ placeId: e.placeId, name: e.name, iconUrl: e.iconUrl || "", url: e.url || `https://www.roblox.com/games/${e.placeId}` }));
+  };
+
+  try {
+    const d = await RB.getHomeSorts();
+    homeSections = { recent: d.recent.length ? d.recent : await localRecent(), recommended: d.recommended };
+    homeError = false;
+    homeLoadedAt = Date.now();
+  } catch {
+    homeSections = { recent: await localRecent(), recommended: [] };
+    homeError = true;
+  } finally {
+    homeLoading = false;
+    updateHomeSectionsUI();
+  }
+}
+
+function updateHomeSectionsUI() {
+  const fill = (id, items, emptyText) => {
+    const box = document.getElementById(id);
+    if (!box) return;
+    if (homeLoading && !homeSections) box.replaceChildren(h("div", { class: "empty", textContent: "Φόρτωση…" }));
+    else if (!items || !items.length) box.replaceChildren(h("div", { class: "empty", textContent: emptyText }));
+    else box.replaceChildren(...items.map(gameTile));
+    resetCarousel(box);
+  };
+  fill("home-recent-list", homeSections?.recent, "Δεν υπάρχει τίποτα ακόμα. Τα παιχνίδια που παίζεις θα εμφανίζονται εδώ.");
+  fill("home-recommended-list", homeSections?.recommended,
+    homeError ? "Δεν φορτώθηκαν οι προτάσεις. Πάτα Ανανέωση για να ξαναπροσπαθήσεις." : "Δεν υπάρχουν προτάσεις αυτή τη στιγμή.");
+
+  const btn = document.getElementById("refresh-home-btn");
+  if (btn) {
+    btn.disabled = homeLoading;
+    btn.textContent = homeLoading ? "⏳ Φόρτωση..." : "🔄 Ανανέωση";
+  }
+}
+
 function updateHomeCurrent() {
   const slot = document.getElementById("home-current-slot");
   if (slot) slot.replaceChildren(currentCard());
@@ -691,7 +905,21 @@ function updateHomeFriends() {
   if (friendsError) box.replaceChildren(h("div", { class: "empty", textContent: "Δεν φορτώθηκαν οι φίλοι. Πάτα Ανανέωση για να ξαναπροσπαθήσεις." }));
   else if (friends === null) box.replaceChildren(h("div", { class: "empty", textContent: "Φόρτωση…" }));
   else if (!friends.length) box.replaceChildren(h("div", { class: "empty", textContent: "Κανένας φίλος online αυτή τη στιγμή." }));
-  else box.replaceChildren(...friends.map(friendRow));
+  else {
+    const inServer = friends.filter((f) => f.type === 2 && f.placeId);
+    const rest = friends.filter((f) => !(f.type === 2 && f.placeId));
+    const groups = groupFriendsByServer(inServer);
+    const parts = [];
+    if (groups.length) {
+      parts.push(h("div", { class: "subhead", textContent: "🎮 Servers όπου παίζουν οι φίλοι μου" }));
+      parts.push(...groups.map(serverGroupCard));
+    }
+    if (rest.length) {
+      parts.push(h("div", { class: "subhead", textContent: "🟢 Online" }));
+      parts.push(...rest.map(friendRow));
+    }
+    box.replaceChildren(...parts);
+  }
 }
 
 function renderHome() {
@@ -704,20 +932,33 @@ function renderHome() {
   });
   refreshBtn.addEventListener("click", () => manualRefreshFriends(false));
 
+  const homeRefreshBtn = h("button", { id: "refresh-home-btn", class: "btn", textContent: "🔄 Ανανέωση" });
+  homeRefreshBtn.addEventListener("click", () => loadHomeSections(true));
+
   main.replaceChildren(
     h("h2", { textContent: "Αρχική" }),
     quickLaunchBar(),
     h("div", { id: "home-current-slot" }),
     h("div", { class: "section-header" },
+      h("h3", { textContent: "Πρόσφατες επισκέψεις" }),
+      homeRefreshBtn
+    ),
+    makeCarousel("home-recent-list"),
+    h("div", { class: "section-header" },
+      h("h3", { textContent: "Προτεινόμενα για σένα" })
+    ),
+    makeCarousel("home-recommended-list"),
+	    h("div", { class: "section-header" },
       h("h3", { textContent: "Φίλοι online" }),
       refreshBtn
     ),
-    h("div", { id: "home-friends-list", class: "list" })
+	h("div", { id: "home-friends-list", class: "list" }),
   );
 
   updateRefreshBtnUI();
   updateHomeCurrent();
   updateHomeFriends();
+  updateHomeSectionsUI();
 }
 
 function historyRow(e) {
@@ -732,7 +973,7 @@ function historyRow(e) {
   });
   star.addEventListener("click", () => toggleFav(e.placeId));
 
-  const copy = h("button", { class: "btn", textContent: "📋", title: "Copy AI Prompt" });
+  const copy = h("button", { class: "btn", textContent: "📋", title: "Αντιγραφή AI Prompt" });
   copy.addEventListener("click", () => copyPrompt(e.name, e.placeId, copy));
 
   const joinBtn = makeDirectJoinBtn(e.placeId, null, null, "▶ Join");
@@ -777,8 +1018,8 @@ function historyRow(e) {
   if (isFavView) {
     const noteToggleBtn = h("button", {
       class: "btn " + (hasNote || hasVip ? "primary" : ""),
-      textContent: hasNote || hasVip ? "📝 VIP/Note" : "📝+",
-      title: "Προσθήκη/Επεξεργασία Private Server & Note"
+      textContent: hasNote || hasVip ? "📝 VIP/Σημείωση" : "📝+",
+      title: "Προσθήκη/Επεξεργασία Private Server & Σημείωσης"
     });
     noteToggleBtn.addEventListener("click", () => {
       openNotePlaceId = Number(openNotePlaceId) === Number(e.placeId) ? null : e.placeId;
@@ -799,7 +1040,7 @@ function historyRow(e) {
     });
     const noteInput = h("input", {
       type: "text",
-      placeholder: "Σημείωση / Note (π.χ. VIP του Νίκου, AFK farming, codes...)",
+      placeholder: "Σημείωση (π.χ. VIP του Νίκου, AFK farming, codes...)",
       value: e.note || ""
     });
 
@@ -810,18 +1051,18 @@ function historyRow(e) {
         note: noteInput.value.trim()
       });
       openNotePlaceId = null;
-      showToast("✅ Αποθηκεύτηκε το VIP / Note!");
+      showToast("✅ Αποθηκεύτηκε το VIP / η σημείωση!");
     });
 
-    const copyVipBtn = h("button", { class: "btn", textContent: "📋 Copy VIP Link" });
+    const copyVipBtn = h("button", { class: "btn", textContent: "📋 Αντιγραφή VIP Link" });
     copyVipBtn.addEventListener("click", async () => {
       if (!vipInput.value.trim()) {
         showToast("⚠️ Δεν υπάρχει VIP link για αντιγραφή.");
         return;
       }
       await navigator.clipboard.writeText(vipInput.value.trim());
-      copyVipBtn.textContent = "Copied! ✔";
-      setTimeout(() => (copyVipBtn.textContent = "📋 Copy VIP Link"), 1800);
+      copyVipBtn.textContent = "Αντιγράφηκε! ✔";
+      setTimeout(() => (copyVipBtn.textContent = "📋 Αντιγραφή VIP Link"), 1800);
     });
 
     const panel = h("div", {
@@ -895,7 +1136,7 @@ async function renderHistoryLike() {
     headerRow.append(
       h("span", {
         class: "badge" + (continueSyncStatus === "fallback" ? " fallback" : ""),
-        textContent: continueSyncStatus === "api" ? "⚡ Sync από Roblox Continue" : "💾 Τοπικό Ιστορικό"
+        textContent: continueSyncStatus === "api" ? "⚡ Συγχρονισμός από Roblox Continue" : "💾 Τοπικό ιστορικό"
       })
     );
   }
@@ -937,13 +1178,13 @@ async function renderHistoryLike() {
   const bar = h("div", { class: "bar" }, search, sortSelect);
 
   if (!onlyFav) {
-    const syncBtn = h("button", { class: "btn", textContent: "🔄 Sync Continue" });
+    const syncBtn = h("button", { class: "btn", textContent: "🔄 Συγχρονισμός Continue" });
     syncBtn.addEventListener("click", async () => {
       syncBtn.disabled = true;
       syncBtn.textContent = "⏳...";
       await syncContinueHistory();
       syncBtn.disabled = false;
-      syncBtn.textContent = "🔄 Sync Continue";
+      syncBtn.textContent = "🔄 Συγχρονισμός Continue";
       renderHistoryLike();
     });
     bar.append(syncBtn);
@@ -987,7 +1228,7 @@ async function renderSettings() {
       notifyMinutes: mins
     });
     sessionNotified = false;
-    saveNotifyBtn.textContent = "Saved! ✔";
+    saveNotifyBtn.textContent = "Αποθηκεύτηκε! ✔";
     setTimeout(() => (saveNotifyBtn.textContent = "💾 Αποθήκευση Ορίου"), 1500);
   });
 
@@ -1019,7 +1260,7 @@ async function renderSettings() {
 
   savePromptBtn.addEventListener("click", async () => {
     await chrome.storage.local.set({ customPrompt: ta.value.trim() });
-    savePromptBtn.textContent = "Saved! ✔";
+    savePromptBtn.textContent = "Αποθηκεύτηκε! ✔";
     setTimeout(() => (savePromptBtn.textContent = "💾 Αποθήκευση Prompt"), 1500);
   });
 
@@ -1057,6 +1298,7 @@ document.querySelectorAll("nav button").forEach((b) =>
     if (view === "history") {
       syncContinueHistory();
     }
+    if (view === "home") loadHomeSections();
   }));
 
 // ---------- title ----------
@@ -1122,6 +1364,7 @@ renderView();
 tick();
 syncContinueHistory();
 manualRefreshFriends(true);
+loadHomeSections();
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {

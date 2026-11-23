@@ -34,6 +34,11 @@ let autoRejoin = false;
 let autoRejoinAttempts = 0;
 let lastPlayingGame = null;    // { placeId, gameId, name }
 let openNotePlaceId = null;    // poio paixnidi exei anoixto to panel VIP/Note
+let friendIcons = new Map();      // placeId -> game icon (for server groups)
+let homeSections = null;         // { recent, recommended }
+let homeLoading = false;
+let homeError = false;
+let homeLoadedAt = 0;
 let iconFetchInProgress = false;
 
 // Katagrafi xronou paixnidiou & eidopoiiseon
@@ -519,6 +524,7 @@ async function manualRefreshFriends(isInitial = false) {
     friendsLoading = false;
     startFriendsCooldown();
     if (view === "home") updateHomeFriends();
+    loadFriendGameIcons();
   }
 }
 
@@ -683,6 +689,214 @@ function friendRow(f) {
   return row;
 }
 
+function makeChipAvatar(url, name) {
+  const initial = (name || "?").trim().charAt(0).toUpperCase() || "?";
+  const ph = () => h("div", { class: "ph", textContent: initial });
+  if (!url) return ph();
+  const img = h("img", { src: url, alt: "", loading: "lazy" });
+  img.addEventListener("error", () => img.replaceWith(ph()));
+  return img;
+}
+
+// Groups friends who are in the same server (same gameId). Friends without a gameId get their own group.
+function groupFriendsByServer(list) {
+  const map = new Map();
+  list.forEach((f) => {
+    const key = f.gameId ? `${f.placeId}:${f.gameId}` : `solo:${f.id}`;
+    if (!map.has(key)) map.set(key, { placeId: f.placeId, gameId: f.gameId || null, name: f.location, friends: [] });
+    map.get(key).friends.push(f);
+  });
+  return [...map.values()].sort((a, b) => b.friends.length - a.friends.length);
+}
+
+function serverGroupCard(g) {
+  const gameUrl = `https://www.roblox.com/games/${g.placeId}`;
+  const together = g.friends.length > 1;
+  const names = g.friends.map((f) => f.displayName || f.name || "Player");
+
+  const sub = together
+    ? `👥 ${g.friends.length} friends together in this server`
+    : `👤 ${names[0]} is playing`;
+
+  const btns = h("div", { class: "server-btns" });
+  if (g.gameId) {
+    btns.append(
+      makeDirectJoinBtn(g.placeId, null, g.gameId, "▶ Join server"),
+      makeCopyLinkBtn(`https://www.roblox.com/games/start?placeId=${g.placeId}&gameInstanceId=${g.gameId}`)
+    );
+  } else {
+    btns.append(
+      makeDirectJoinBtn(g.placeId, g.friends[0].id, null, "▶ Join friend"),
+      makeCopyLinkBtn(gameUrl)
+    );
+  }
+
+  const chips = h("div", { class: "chips" }, ...g.friends.map((f, i) =>
+    h("div", { class: "chip" },
+      makeChipAvatar(f.avatar, names[i]),
+      h("a", { href: `https://www.roblox.com/users/${f.id}/profile`, target: "_blank", textContent: names[i] }))
+  ));
+
+  return h("div", { class: "server-card" + (together ? " together" : "") },
+    h("div", { class: "server-head" },
+      makeGameThumb(friendIcons.get(Number(g.placeId)) || ""),
+      h("div", { class: "txt" },
+        h("a", { href: gameUrl, target: "_blank", textContent: g.name || "Roblox Game" }),
+        h("span", { class: "sub", textContent: sub })),
+      btns),
+    chips);
+}
+
+async function loadFriendGameIcons() {
+  const ids = [...new Set((friends || []).filter((f) => f.type === 2 && f.placeId).map((f) => Number(f.placeId)))]
+    .filter((id) => !friendIcons.has(id))
+    .slice(0, 30);
+  if (!ids.length) return;
+  const icons = await RB.getIconsByPlaceIds(ids);
+  icons.forEach((url, id) => friendIcons.set(Number(id), url));
+  if (view === "home") updateHomeFriends();
+}
+
+// ---------- Roblox-style carousel: 7 full cards per page, arrows, no scrollbar ----------
+const CAROUSEL_VISIBLE = 7;
+
+function makeCarousel(id) {
+  const arrow = (dir) => {
+    const el = h("div", { class: `scroller-new ${dir}` },
+      h("span", { class: `icon-chevron-heavy-${dir === "prev" ? "left" : "right"}` }));
+    el.setAttribute("data-testid", "game-carousel-scroll-bar");
+    el.setAttribute("role", "button");
+    el.setAttribute("tabindex", "0");
+    el.setAttribute("aria-disabled", "true");
+    el.setAttribute("aria-label", dir === "prev" ? "Previous" : "Next");
+    return el;
+  };
+
+  const prev = arrow("prev");
+  const next = arrow("next");
+  const viewport = h("div", { id, class: "carousel" });
+  const wrap = h("div", { class: "carousel-wrap" }, prev, viewport, next);
+  let index = 0;
+
+  const tiles = () => viewport.querySelectorAll(".tile");
+  const stride = () => {
+    const t = tiles();
+    // getBoundingClientRect keeps the fractional pixels (offsetLeft rounds them, which cuts cards)
+    return t.length > 1 ? t[1].getBoundingClientRect().left - t[0].getBoundingClientRect().left : 0;
+  };
+
+  const update = () => {
+    const s = stride();
+    if (s) index = Math.round(viewport.scrollLeft / s);
+    const max = viewport.scrollWidth - viewport.clientWidth;
+    prev.setAttribute("aria-disabled", String(viewport.scrollLeft <= 2));
+    next.setAttribute("aria-disabled", String(max <= 2 || viewport.scrollLeft >= max - 2));
+  };
+
+  const go = (dir) => {
+    const s = stride();
+    const n = tiles().length;
+    if (!s || n <= CAROUSEL_VISIBLE) return;
+    const target = dir === "next"
+      ? Math.min(index + CAROUSEL_VISIBLE, n - CAROUSEL_VISIBLE)
+      : Math.max(index - CAROUSEL_VISIBLE, 0);
+    viewport.scrollTo({ left: target * s, behavior: "smooth" });
+  };
+
+  [prev, next].forEach((el) => {
+    const dir = el === prev ? "prev" : "next";
+    el.addEventListener("click", () => {
+      if (el.getAttribute("aria-disabled") !== "true") go(dir);
+    });
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); el.click(); }
+    });
+  });
+
+  viewport.addEventListener("scroll", update, { passive: true });
+  // On window resize the card width changes, so keep the same first card aligned
+  new ResizeObserver(() => {
+    const s = stride();
+    if (s) viewport.scrollTo({ left: index * s, behavior: "instant" });
+    update();
+  }).observe(viewport);
+
+  wrap._update = update;
+  return wrap;
+}
+
+function resetCarousel(viewport) {
+  viewport.scrollTo({ left: 0, behavior: "instant" });
+  viewport.parentElement?._update?.();
+}
+
+function gameTile(g) {
+  const url = g.url || `https://www.roblox.com/games/${g.placeId}`;
+  const thumb = g.iconUrl
+    ? h("img", { src: g.iconUrl, alt: "", loading: "lazy" })
+    : h("div", { class: "ph", textContent: "🎮" });
+
+  const bits = [];
+  if (g.playerCount != null) bits.push(`👥 ${Number(g.playerCount).toLocaleString()}`);
+  const votes = (g.upVotes || 0) + (g.downVotes || 0);
+  if (votes > 0) bits.push(`👍 ${Math.round((g.upVotes / votes) * 100)}%`);
+
+  return h("div", { class: "tile" },
+    h("a", { href: url, target: "_blank", title: g.name }, thumb),
+    h("a", { class: "tname", href: url, target: "_blank", title: g.name, textContent: g.name }),
+    bits.length ? h("span", { class: "sub", textContent: bits.join(" · ") }) : null,
+    makeDirectJoinBtn(g.placeId, null, null, "▶ Join"));
+}
+
+async function loadHomeSections(force = false) {
+  if (homeLoading) return;
+  if (!force && homeSections && Date.now() - homeLoadedAt < 5 * 60 * 1000) return;
+  homeLoading = true;
+  updateHomeSectionsUI();
+
+  const localRecent = async () => {
+    const { history = [] } = await chrome.storage.local.get("history");
+    return history
+      .slice()
+      .sort((a, b) => b.lastPlayed - a.lastPlayed)
+      .slice(0, 20)
+      .map((e) => ({ placeId: e.placeId, name: e.name, iconUrl: e.iconUrl || "", url: e.url || `https://www.roblox.com/games/${e.placeId}` }));
+  };
+
+  try {
+    const d = await RB.getHomeSorts();
+    homeSections = { recent: d.recent.length ? d.recent : await localRecent(), recommended: d.recommended };
+    homeError = false;
+    homeLoadedAt = Date.now();
+  } catch {
+    homeSections = { recent: await localRecent(), recommended: [] };
+    homeError = true;
+  } finally {
+    homeLoading = false;
+    updateHomeSectionsUI();
+  }
+}
+
+function updateHomeSectionsUI() {
+  const fill = (id, items, emptyText) => {
+    const box = document.getElementById(id);
+    if (!box) return;
+    if (homeLoading && !homeSections) box.replaceChildren(h("div", { class: "empty", textContent: "Loading…" }));
+    else if (!items || !items.length) box.replaceChildren(h("div", { class: "empty", textContent: emptyText }));
+    else box.replaceChildren(...items.map(gameTile));
+    resetCarousel(box);
+  };
+  fill("home-recent-list", homeSections?.recent, "Nothing here yet. Games you play will show up here.");
+  fill("home-recommended-list", homeSections?.recommended,
+    homeError ? "Couldn't load recommendations. Press Refresh to try again." : "No recommendations available right now.");
+
+  const btn = document.getElementById("refresh-home-btn");
+  if (btn) {
+    btn.disabled = homeLoading;
+    btn.textContent = homeLoading ? "⏳ Loading..." : "🔄 Refresh";
+  }
+}
+
 function updateHomeCurrent() {
   const slot = document.getElementById("home-current-slot");
   if (slot) slot.replaceChildren(currentCard());
@@ -694,7 +908,21 @@ function updateHomeFriends() {
   if (friendsError) box.replaceChildren(h("div", { class: "empty", textContent: "Couldn't load friends. Press Refresh to try again." }));
   else if (friends === null) box.replaceChildren(h("div", { class: "empty", textContent: "Loading…" }));
   else if (!friends.length) box.replaceChildren(h("div", { class: "empty", textContent: "No friends online right now." }));
-  else box.replaceChildren(...friends.map(friendRow));
+  else {
+    const inServer = friends.filter((f) => f.type === 2 && f.placeId);
+    const rest = friends.filter((f) => !(f.type === 2 && f.placeId));
+    const groups = groupFriendsByServer(inServer);
+    const parts = [];
+    if (groups.length) {
+      parts.push(h("div", { class: "subhead", textContent: "🎮 Servers my friends are in" }));
+      parts.push(...groups.map(serverGroupCard));
+    }
+    if (rest.length) {
+      parts.push(h("div", { class: "subhead", textContent: "🟢 Online" }));
+      parts.push(...rest.map(friendRow));
+    }
+    box.replaceChildren(...parts);
+  }
 }
 
 function renderHome() {
@@ -707,20 +935,33 @@ function renderHome() {
   });
   refreshBtn.addEventListener("click", () => manualRefreshFriends(false));
 
+  const homeRefreshBtn = h("button", { id: "refresh-home-btn", class: "btn", textContent: "🔄 Refresh" });
+  homeRefreshBtn.addEventListener("click", () => loadHomeSections(true));
+
   main.replaceChildren(
     h("h2", { textContent: "Home" }),
     quickLaunchBar(),
     h("div", { id: "home-current-slot" }),
     h("div", { class: "section-header" },
+      h("h3", { textContent: "Recently Visited" }),
+      homeRefreshBtn
+    ),
+    makeCarousel("home-recent-list"),
+    h("div", { class: "section-header" },
+      h("h3", { textContent: "Recommended For You" })
+    ),
+    makeCarousel("home-recommended-list"),
+	    h("div", { class: "section-header" },
       h("h3", { textContent: "Friends online" }),
       refreshBtn
     ),
-    h("div", { id: "home-friends-list", class: "list" })
+	h("div", { id: "home-friends-list", class: "list" }),
   );
 
   updateRefreshBtnUI();
   updateHomeCurrent();
   updateHomeFriends();
+  updateHomeSectionsUI();
 }
 
 function historyRow(e) {
@@ -1060,6 +1301,7 @@ document.querySelectorAll("nav button").forEach((b) =>
     if (view === "history") {
       syncContinueHistory();
     }
+    if (view === "home") loadHomeSections();
   }));
 
 // ---------- title ----------
@@ -1125,6 +1367,7 @@ renderView();
 tick();
 syncContinueHistory();
 manualRefreshFriends(true);
+loadHomeSections();
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {

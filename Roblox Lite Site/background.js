@@ -1,4 +1,4 @@
-// Ρύθμιση header rule ώστε το Roblox auth-ticket endpoint να δέχεται αιτήματα από το extension
+// Header rule so the Roblox auth-ticket endpoint accepts requests from the extension
 async function setupAuthTicketRule() {
   const ruleId = 1001;
   await chrome.declarativeNetRequest.updateDynamicRules({
@@ -27,9 +27,9 @@ chrome.runtime.onInstalled.addListener(setupAuthTicketRule);
 chrome.runtime.onStartup.addListener(setupAuthTicketRule);
 setupAuthTicketRule();
 
-// Τρέχει μόνο όταν πατάς το εικονίδιο. Ανοίγει ή εστιάζει το Lite Site.
+// Runs only when you click the icon. Opens or focuses the Lite Site.
 chrome.action.onClicked.addListener(async () => {
-  const url = chrome.runtime.getURL("lite.html");
+  const url = chrome.runtime.getURL("lite.html#home");
   const [tab] = await chrome.tabs.query({ url });
   if (tab) {
     await chrome.tabs.update(tab.id, { active: true });
@@ -39,12 +39,12 @@ chrome.action.onClicked.addListener(async () => {
   }
 });
 
-// Αποστολή Desktop Notification κατόπιν αιτήματος από το lite.js
+// Show a desktop notification when requested by lite.js
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "NOTIFY_PLAYTIME") {
     chrome.notifications.create("playtime-limit-" + Date.now(), {
       type: "basic",
-      iconUrl: msg.iconUrl || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      iconUrl: msg.iconUrl || chrome.runtime.getURL("icons/icon128.png"),
       title: "⏰ Όριο Χρόνου Gaming",
       message: msg.text,
       priority: 2

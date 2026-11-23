@@ -1,4 +1,4 @@
-// Κοινός κώδικας: ρωτάει live το Roblox API, φέρνει Continue games, Server Hop και Direct Join.
+// Shared code: queries the Roblox API live (presence, friends, Continue games, Server Hop, Direct Join).
 const RB = {
   csrf: "",
   avatarCache: new Map(),
@@ -79,7 +79,7 @@ const RB = {
     return (await r.json()).userPresences || [];
   },
 
-  // Η δική σου κατάσταση
+  // Your own status
   async getState() {
     const userId = await RB.getUserId();
     const p = (await RB.getPresences([userId]))[0];
@@ -116,7 +116,7 @@ const RB = {
     return state;
   },
 
-  // Αυτόματο ιστορικό από την ενότητα "Continue" του Roblox API
+  // Automatic history from the Roblox "Continue" section
   async getContinueGames() {
     await RB.getUserId();
     let games = [];
@@ -196,7 +196,7 @@ const RB = {
     return result;
   },
 
-  // Φίλοι online: [{ id, name, displayName, type, location, placeId, gameId, avatar }]
+  // Friends online: [{ id, name, displayName, type, location, placeId, gameId, avatar }]
   async getFriendsOnline() {
     const userId = await RB.getUserId();
     const r = await RB.req(`https://friends.roblox.com/v1/users/${userId}/friends/online`);
@@ -229,7 +229,7 @@ const RB = {
       .sort((a, b) => (b.type === 2) - (a.type === 2));
   },
 
-  // Το friends/online δεν επιστρέφει ονόματα, οπότε τα φέρνουμε από το users API
+  // friends/online doesn't return names, so we fetch them from the users API
   async loadNames(ids) {
     const missing = ids.filter((id) => !RB.nameCache.has(id));
     if (!missing.length) return;
@@ -258,7 +258,106 @@ const RB = {
     } catch {}
   },
 
-  // Server Hop: mode = "empty" (λιγότεροι παίκτες) | "lowping" (χαμηλότερο ping)
+  // Icons for several places at once: Map(placeId -> url). Cache first, then one batch request.
+  async getIconsByPlaceIds(placeIds) {
+    const out = new Map();
+    const ids = [...new Set((placeIds || []).filter(Boolean).map(Number))];
+    if (!ids.length) return out;
+    const { iconCache = {} } = await chrome.storage.local.get("iconCache");
+    const need = [];
+    ids.forEach((id) => (iconCache[id] ? out.set(id, iconCache[id]) : need.push(id)));
+    if (need.length) {
+      try {
+        const r = await RB.req(
+          `https://thumbnails.roblox.com/v1/places/gameicons?placeIds=${need.slice(0, 50).join(",")}&returnPolicy=PlaceHolder&size=150x150&format=Png&isCircular=false`
+        );
+        if (r.ok) {
+          ((await r.json()).data || []).forEach((d) => {
+            if (!d.imageUrl) return;
+            out.set(Number(d.targetId), d.imageUrl);
+            if (!d.state || d.state === "Completed") iconCache[d.targetId] = d.imageUrl;
+          });
+          await chrome.storage.local.set({ iconCache });
+        }
+      } catch {}
+    }
+    return out;
+  },
+
+  // Home page sections from the Roblox discovery API: "Recently Visited" and "Recommended For You".
+  // Returns { recent: [...], recommended: [...], topics: [...] }
+  async getHomeSorts() {
+    await RB.getUserId();
+    const makeBody = (types) =>
+      JSON.stringify({
+        pageType: "Home",
+        sessionId: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+        supportedTreatmentTypes: types
+      });
+
+    let data = null;
+    for (const types of [["Carousel", "SortlessGrid"], ["SortlessGrid"]]) {
+      try {
+        const r = await RB.req("https://apis.roblox.com/discovery-api/omni-recommendation", {
+          method: "POST",
+          body: makeBody(types)
+        });
+        if (r.ok) {
+          data = await r.json();
+          break;
+        }
+      } catch {}
+    }
+    if (!data) throw new Error("home-unavailable");
+
+    const sorts = data.sorts || [];
+    const meta = data.contentMetadata?.Game || {};
+    const topics = sorts.map((s) => s.topic).filter(Boolean);
+    console.info("[Lite] Home sorts found:", topics);
+
+    const toGames = (sort) =>
+      (sort?.recommendationList || [])
+        .map((item) => meta[String(item.contentId)])
+        .filter(Boolean)
+        .map((g) => ({
+          placeId: g.rootPlaceId,
+          universeId: g.universeId,
+          name: g.name || "Roblox Game",
+          playerCount: typeof g.playerCount === "number" ? g.playerCount : null,
+          upVotes: g.totalUpVotes,
+          downVotes: g.totalDownVotes
+        }))
+        .filter((g) => g.placeId)
+        .slice(0, 20);
+
+    const find = (re) => sorts.find((s) => s.topic && re.test(s.topic));
+    // Topic names come localized from Roblox (English, Greek...), so match both languages and the Continue topicId
+    const recentSort =
+      find(/recent|visited|πρόσφατ|επισκ/i) ||
+      sorts.find((s) => s.topicId === 100000003) ||
+      find(/continue|συνέχ/i);
+    let recSort = find(/recommend|προτειν|προτάσ/i);
+    if (!recSort) {
+      // Fallback: first other sort that has enough games
+      recSort = sorts.find((s) => s !== recentSort && (s.recommendationList || []).length >= 4);
+    }
+
+    const recent = toGames(recentSort);
+    const recommended = toGames(recSort);
+
+    const icons = await RB.getIconsByUniverseIds(
+      [...recent, ...recommended].map((g) => g.universeId).filter(Boolean)
+    );
+    const decorate = (g) => ({
+      ...g,
+      url: `https://www.roblox.com/games/${g.placeId}`,
+      iconUrl: icons.get(g.universeId) || ""
+    });
+
+    return { recent: recent.map(decorate), recommended: recommended.map(decorate), topics };
+  },
+
+  // Server Hop: mode = "empty" (fewest players) | "lowping" (lowest ping)
   async serverHop(placeId, mode = "empty", excludeGameId = null) {
     if (!placeId) return;
     const sortOrder = mode === "empty" ? "Asc" : "Desc";
@@ -282,14 +381,14 @@ const RB = {
 
     let chosen = servers[0];
     if (mode === "lowping") {
-      // Ταξινόμηση με βάση το χαμηλότερο ping (αν επιστρέφεται από το API)
+      // Sort by lowest ping (if the API returns it)
       const withPing = servers.filter((s) => typeof s.ping === "number" && s.ping > 0);
       if (withPing.length) {
         withPing.sort((a, b) => a.ping - b.ping);
         chosen = withPing[0];
       }
     } else {
-      // "empty": παίρνουμε τον server με τους λιγότερους παίκτες (τουλάχιστον 1 ενεργό)
+      // "empty": pick the server with the fewest players
       servers.sort((a, b) => a.playing - b.playing);
       chosen = servers[0];
     }
@@ -298,7 +397,7 @@ const RB = {
     return chosen;
   },
 
-  // Εκκίνηση παιχνιδιού απευθείας στον Roblox Client μέσω roblox-player: protocol με έγκυρο ticket
+  // Launch a game directly in the Roblox Client via the roblox-player: protocol with a valid ticket
   async launchGame(placeId, followUserId = null, gameInstanceId = null) {
     if (!placeId) return;
 

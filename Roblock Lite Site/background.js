@@ -29,7 +29,7 @@ setupAuthTicketRule();
 
 // Runs only when you click the icon. Opens or focuses the Lite Site.
 chrome.action.onClicked.addListener(async () => {
-  const url = chrome.runtime.getURL("lite.html");
+  const url = chrome.runtime.getURL("lite.html#home");
   const [tab] = await chrome.tabs.query({ url });
   if (tab) {
     await chrome.tabs.update(tab.id, { active: true });

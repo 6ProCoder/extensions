@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Roblox Lite Site",
-  "version": "10.0",
-  "description": "Γρήγορο Lite Site για Roblox: live παιχνίδι, φίλοι online, Continue, Direct Join, Server Hop, Playtime & ειδοποιήσεις.",
+  "version": "12.0",
+  "description": "Γρήγορο Roblox dashboard: live κατάσταση παιχνιδιού, φίλοι online, ιστορικό Continue, Direct Join, Server Hop και υπενθυμίσεις χρόνου παιχνιδιού.",
   "permissions": [
     "storage",
     "declarativeNetRequest",

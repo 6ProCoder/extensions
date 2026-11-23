@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Roblock Lite Site",
-  "version": "10.0",
+  "version": "12.0",
   "description": "A fast, lightweight Roblox dashboard: live game status, online friends, Continue history, Direct Join, Server Hop and playtime reminders.",
   "permissions": [
     "storage",
